@@ -87,8 +87,7 @@ export function createMcpServer(config: McpServerConfig) {
   }
 
   function resourceUrl(request: Request) {
-    const url = new URL(request.url);
-    return `${url.protocol}//${url.host}${normalized.path}`;
+    return `${baseUrl(request)}${normalized.path}`;
   }
 
   function baseUrl(request: Request) {

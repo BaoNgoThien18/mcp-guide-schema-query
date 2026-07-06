@@ -1,0 +1,32 @@
+{
+  "name": "@bugmedia/mcp-guide-schema-query",
+  "version": "0.1.0",
+  "description": "Reusable read-only MCP server for database guide, schema inspection, and safe SQL select tools.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "database",
+    "postgres",
+    "nextjs"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "pg": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.17",
+    "@types/pg": "^8.15.6",
+    "typescript": "^5.9.3"
+  }
+}

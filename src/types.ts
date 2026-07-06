@@ -2,6 +2,7 @@ export type McpServerConfig = {
   serverName: string;
   serverVersion?: string;
   path: string;
+  publicOrigin?: string;
   webToken: string;
   oauthClientId: string;
   oauthClientSecret: string;

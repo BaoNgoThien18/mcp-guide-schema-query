@@ -92,6 +92,7 @@ export function createMcpServer(config: McpServerConfig) {
   }
 
   function baseUrl(request: Request) {
+    if (normalized.publicOrigin) return normalized.publicOrigin.replace(/\/+$/, "");
     const url = new URL(request.url);
     return `${url.protocol}//${url.host}`;
   }

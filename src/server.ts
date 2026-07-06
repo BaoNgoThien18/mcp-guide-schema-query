@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
+import { codebaseMap, codebaseRead } from "./codebase.js";
 import { makeToken, pkceChallenge, timingSafeEqual, verifyToken } from "./oauth.js";
 import type { JsonRpcRequest, McpServerConfig } from "./types.js";
 
-const toolNames = ["database-guide", "database-schema", "database-select"] as const;
+const toolNames = ["database-guide", "database-schema", "database-select", "codebase-map", "codebase-read"] as const;
 
 export function createMcpServer(config: McpServerConfig) {
   const normalized = {
@@ -15,7 +16,7 @@ export function createMcpServer(config: McpServerConfig) {
     supportedProtocolVersions: config.supportedProtocolVersions ?? ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"],
   };
 
-  const tools = [
+  const tools: Array<Record<string, unknown>> = [
     {
       name: "database-guide",
       title: "Database Guide Tool",
@@ -53,6 +54,37 @@ export function createMcpServer(config: McpServerConfig) {
       annotations: { readOnlyHint: true },
     },
   ];
+
+  if (normalized.codebase) {
+    tools.push(
+      {
+        name: "codebase-map",
+        title: "Codebase Map Tool",
+        description:
+          "List important source files in the configured codebase root. Use this before reading files to understand project structure.",
+        inputSchema: { type: "object" },
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: "codebase-read",
+        title: "Codebase Read Tool",
+        description:
+          "Read selected source files from the configured codebase root. Blocks secrets, env files, dependencies, build artifacts, and path traversal.",
+        inputSchema: {
+          type: "object",
+          required: ["paths"],
+          properties: {
+            paths: {
+              type: "array",
+              items: { type: "string" },
+              description: "Relative source file paths to read.",
+            },
+          },
+        },
+        annotations: { readOnlyHint: true },
+      }
+    );
+  }
 
   function resourceUrl(request: Request) {
     const url = new URL(request.url);
@@ -285,8 +317,14 @@ export function createMcpServer(config: McpServerConfig) {
       text = typeof guide === "function" ? await guide() : guide;
     } else if (name === "database-schema") {
       text = await normalized.database.schema((params.arguments ?? {}) as never);
-    } else {
+    } else if (name === "database-select") {
       text = await normalized.database.select((params.arguments ?? {}) as never);
+    } else if (name === "codebase-map" && normalized.codebase) {
+      text = await codebaseMap(normalized.codebase);
+    } else if (name === "codebase-read" && normalized.codebase) {
+      text = await codebaseRead(normalized.codebase, (params.arguments ?? {}) as never);
+    } else {
+      return jsonRpcError(rpc.id, -32602, `Unknown tool: ${name}`);
     }
 
     return jsonRpcResult(rpc.id, { content: [{ type: "text", text }] });

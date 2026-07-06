@@ -13,6 +13,7 @@ export type McpServerConfig = {
   supportedProtocolVersions?: string[];
   guideText: string | (() => string | Promise<string>);
   database: DatabaseAdapter;
+  codebase?: CodebaseConfig;
 };
 
 export type DatabaseAdapter = {
@@ -31,6 +32,14 @@ export type SchemaArgs = {
 export type SelectArgs = {
   query?: string;
   limit?: number | null;
+};
+
+export type CodebaseConfig = {
+  rootDir: string;
+  maxFiles?: number;
+  maxReadBytes?: number;
+  includeExtensions?: string[];
+  extraIgnoreDirs?: string[];
 };
 
 export type JsonRpcRequest = {

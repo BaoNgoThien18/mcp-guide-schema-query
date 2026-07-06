@@ -8,6 +8,11 @@ It exposes three MCP tools:
 - `database-schema`
 - `database-select`
 
+Optional codebase tools can be enabled per project:
+
+- `codebase-map`
+- `codebase-read`
+
 The package includes:
 
 - OAuth flow compatible with Claude Web custom connectors.
@@ -53,6 +58,11 @@ export const mcp = createMcpServer({
   oauthClientSecret: process.env.MCP_OAUTH_CLIENT_SECRET ?? "",
   oauthSigningKey: process.env.MCP_OAUTH_SIGNING_KEY ?? process.env.JWT_SECRET ?? "",
   guideText: "Describe your system and important joins here.",
+  codebase: {
+    rootDir: process.cwd(),
+    maxFiles: 300,
+    maxReadBytes: 120000,
+  },
   database: createPostgresAdapter({
     connectionString: process.env.DATABASE_URL ?? "",
     defaultLimit: Number(process.env.MCP_QUERY_DEFAULT_LIMIT ?? "200"),
@@ -144,3 +154,9 @@ codex mcp add finance --url 'https://your-domain.com/mcp/finance?token=...'
 - Runs in `BEGIN READ ONLY`.
 - Applies statement timeout.
 - Adds a limit to plain `SELECT`/`WITH` queries without one.
+
+`codebase-read`:
+
+- Reads only files under the configured `rootDir`.
+- Blocks `.env*`, `.git`, `node_modules`, build output, and dependency/vendor folders.
+- Applies a read budget so large files cannot flood context.

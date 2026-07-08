@@ -19,6 +19,9 @@
     "model-context-protocol",
     "database",
     "postgres",
+    "mysql",
+    "laravel",
+    "php",
     "nextjs"
   ],
   "license": "MIT",

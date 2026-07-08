@@ -1,6 +1,11 @@
 # MCP Guide Schema Query
 
-Reusable read-only MCP server for projects that need AI tools to understand a database, inspect schema, and run safe `SELECT` queries.
+Reusable read-only MCP tools/server for projects that need AI tools to understand a database, inspect schema, run safe `SELECT` queries, and read selected source files.
+
+This repo supports both:
+
+- Node/Next.js through npm: `@bugmedia/mcp-guide-schema-query`
+- Laravel/PHP through Composer: `bugmedia/mcp-guide-schema-query`
 
 It exposes three MCP tools:
 
@@ -13,17 +18,52 @@ Optional codebase tools can be enabled per project:
 - `codebase-map`
 - `codebase-read`
 
-The package includes:
+The Node package includes:
 
 - OAuth flow compatible with Claude Web custom connectors.
 - Static token support for Codex or curl.
 - Streamable HTTP MCP endpoint handlers.
 - PostgreSQL read-only adapter with SQL guardrails.
 
+The Laravel package includes:
+
+- Reusable Laravel MCP `Server` class.
+- The same 5 tools: `database-guide`, `database-schema`, `database-select`, `codebase-map`, `codebase-read`.
+- MySQL/MariaDB and PostgreSQL schema inspection.
+- SQL guardrails and read-only transaction execution.
+- Codebase read guardrails.
+
 ## Install
+
+### Node / Next.js
 
 ```bash
 npm install github:BaoNgoThien18/mcp-guide-schema-query
+```
+
+### Laravel
+
+In `composer.json`:
+
+```json
+{
+  "repositories": [
+    {
+      "type": "vcs",
+      "url": "git@github.com:BaoNgoThien18/mcp-guide-schema-query.git"
+    }
+  ],
+  "require": {
+    "bugmedia/mcp-guide-schema-query": "dev-main"
+  }
+}
+```
+
+Then:
+
+```bash
+composer update bugmedia/mcp-guide-schema-query
+php artisan vendor:publish --tag=mcp-guide-schema-query-config
 ```
 
 ## Environment
@@ -69,6 +109,40 @@ export const mcp = createMcpServer({
     maxLimit: Number(process.env.MCP_QUERY_MAX_LIMIT ?? "1000"),
   }),
 });
+```
+
+## Laravel Usage
+
+Use Laravel MCP for the transport and this package for the reusable server/tools:
+
+```php
+// routes/ai.php
+use Bugmedia\McpGuideSchemaQuery\Servers\GuideSchemaQueryServer;
+use Laravel\Mcp\Facades\Mcp;
+
+Mcp::web('/mcp/kmedia', GuideSchemaQueryServer::class)
+    ->middleware(['your-mcp-auth-middleware', 'throttle:30,1']);
+```
+
+Recommended config/env:
+
+```env
+MCP_SERVER_NAME="Kmedia Production Database"
+MCP_DB_CONNECTION=mysql_mcp_readonly
+MCP_QUERY_DEFAULT_LIMIT=200
+MCP_QUERY_MAX_LIMIT=1000
+MCP_STATEMENT_TIMEOUT_MS=15000
+MCP_CODEBASE_MAX_FILES=400
+MCP_CODEBASE_MAX_READ_BYTES=160000
+```
+
+Configure `mysql_mcp_readonly` or `pgsql_mcp_readonly` in `config/database.php` with a database user that only has read privileges.
+
+The package reads guide docs from:
+
+```text
+docs/mcp-system-overview.md
+docs/mcp-database-map.md
 ```
 
 MCP route:
@@ -151,7 +225,7 @@ codex mcp add finance --url 'https://your-domain.com/mcp/finance?token=...'
 
 - Rejects multiple statements.
 - Blocks DDL/DML/admin commands.
-- Runs in `BEGIN READ ONLY`.
+- Runs in a read-only transaction.
 - Applies statement timeout.
 - Adds a limit to plain `SELECT`/`WITH` queries without one.
 

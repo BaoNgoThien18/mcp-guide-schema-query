@@ -1,0 +1,26 @@
+{
+    "name": "bugmedia/mcp-guide-schema-query",
+    "description": "Reusable read-only MCP tools for Laravel and Node projects: database guide, schema, safe SQL select, and codebase read tools.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^11.0|^12.0",
+        "illuminate/database": "^11.0|^12.0",
+        "laravel/mcp": "^0.2|^0.3"
+    },
+    "autoload": {
+        "psr-4": {
+            "Bugmedia\\McpGuideSchemaQuery\\": "src/Laravel/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Bugmedia\\McpGuideSchemaQuery\\McpGuideSchemaQueryServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

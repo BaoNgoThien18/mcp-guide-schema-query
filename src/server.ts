@@ -11,6 +11,7 @@ export function createMcpServer(config: McpServerConfig) {
     serverVersion: config.serverVersion ?? "1.0.0",
     oauthCodeTtl: config.oauthCodeTtl ?? 300,
     oauthTokenTtl: config.oauthTokenTtl ?? 3600,
+    oauthApprovalPassword: config.oauthApprovalPassword ?? config.oauthClientSecret,
     defaultLimit: config.defaultLimit ?? 200,
     maxLimit: config.maxLimit ?? 1000,
     supportedProtocolVersions: config.supportedProtocolVersions ?? ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"],
@@ -197,7 +198,7 @@ export function createMcpServer(config: McpServerConfig) {
       code_challenge_methods_supported: ["S256"],
       scopes_supported: ["mcp:use"],
       grant_types_supported: ["authorization_code"],
-      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
+      token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
     });
   }
 
@@ -211,13 +212,15 @@ export function createMcpServer(config: McpServerConfig) {
         response_types: ["code"],
         redirect_uris: Array.isArray(payload.redirect_uris) ? payload.redirect_uris : [],
         scope: "mcp:use",
-        token_endpoint_auth_method: "client_secret_post",
+        token_endpoint_auth_method: "none",
       },
       { status: 201 }
     );
   }
 
-  function authorize(request: Request) {
+  async function authorize(request: Request) {
+    if (request.method === "POST") return approveAuthorization(request);
+
     const url = new URL(request.url);
     const clientId = url.searchParams.get("client_id") ?? "";
     const redirectUri = url.searchParams.get("redirect_uri") ?? "";
@@ -228,6 +231,33 @@ export function createMcpServer(config: McpServerConfig) {
     if (clientId !== normalized.oauthClientId) return new Response("Invalid client_id", { status: 400 });
     if (!redirectUri.startsWith("https://")) return new Response("Invalid redirect_uri", { status: 400 });
     if (scope !== "mcp:use") return new Response("Invalid scope", { status: 400 });
+    if (!normalized.oauthApprovalPassword) return new Response("MCP approval password is not configured.", { status: 403 });
+
+    return new Response(authorizationForm(baseUrl(request), Object.fromEntries(url.searchParams.entries())), {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=UTF-8" },
+    });
+  }
+
+  async function approveAuthorization(request: Request) {
+    if (!normalized.oauthApprovalPassword) return new Response("MCP approval password is not configured.", { status: 403 });
+
+    const form = await request.formData();
+    if (!timingSafeEqual(String(form.get("approval_password") ?? ""), normalized.oauthApprovalPassword)) {
+      return new Response("Invalid approval password.", { status: 403 });
+    }
+
+    const payloadRaw = String(form.get("oauth_payload") ?? "");
+    const payload = JSON.parse(Buffer.from(payloadRaw, "base64url").toString("utf8")) as Record<string, string>;
+    const clientId = payload.client_id ?? "";
+    const redirectUri = payload.redirect_uri ?? "";
+    const scope = payload.scope || "mcp:use";
+
+    if (!normalized.oauthClientId) return new Response("Not found", { status: 404 });
+    if (payload.response_type !== "code") return new Response("Unsupported response_type", { status: 400 });
+    if (clientId !== normalized.oauthClientId) return new Response("Invalid client_id", { status: 400 });
+    if (!redirectUri.startsWith("https://")) return new Response("Invalid redirect_uri", { status: 400 });
+    if (scope !== "mcp:use") return new Response("Invalid scope", { status: 400 });
 
     const code = makeToken(
       {
@@ -235,8 +265,8 @@ export function createMcpServer(config: McpServerConfig) {
         client_id: clientId,
         redirect_uri: redirectUri,
         scope,
-        code_challenge: url.searchParams.get("code_challenge") ?? "",
-        code_challenge_method: url.searchParams.get("code_challenge_method") ?? "",
+        code_challenge: payload.code_challenge ?? "",
+        code_challenge_method: payload.code_challenge_method ?? "",
       },
       normalized.oauthCodeTtl,
       normalized.oauthSigningKey
@@ -244,7 +274,7 @@ export function createMcpServer(config: McpServerConfig) {
 
     const target = new URL(redirectUri);
     target.searchParams.set("code", code);
-    const state = url.searchParams.get("state");
+    const state = payload.state;
     if (state) target.searchParams.set("state", state);
     return Response.redirect(target.toString(), 302);
   }
@@ -259,9 +289,10 @@ export function createMcpServer(config: McpServerConfig) {
     const redirectUri = String(form.get("redirect_uri") ?? "");
 
     if (grantType !== "authorization_code") return Response.json({ error: "unsupported_grant_type" }, { status: 400 });
-    if (clientId !== normalized.oauthClientId || clientSecret !== normalized.oauthClientSecret) {
+    if (clientId !== normalized.oauthClientId) {
       return Response.json({ error: "invalid_client" }, { status: 401 });
     }
+    if (clientSecret && clientSecret !== normalized.oauthClientSecret) return Response.json({ error: "invalid_client" }, { status: 401 });
 
     const claims = verifyToken(code, normalized.oauthSigningKey, "authorization_code");
     if (!claims || claims.client_id !== clientId || claims.redirect_uri !== redirectUri) {
@@ -269,6 +300,7 @@ export function createMcpServer(config: McpServerConfig) {
     }
 
     const codeChallenge = String(claims.code_challenge ?? "");
+    if (!clientSecret && !codeChallenge) return Response.json({ error: "invalid_client" }, { status: 401 });
     if (codeChallenge && pkceChallenge(String(form.get("code_verifier") ?? "")) !== codeChallenge) {
       return Response.json({ error: "invalid_grant" }, { status: 400 });
     }
@@ -346,4 +378,13 @@ function parseBasicAuth(header: string) {
   const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
   const [clientId, clientSecret] = decoded.split(":", 2);
   return { clientId, clientSecret };
+}
+
+function authorizationForm(origin: string, payload: Record<string, string>) {
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>MCP Authorization</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#111827;color:#e5e7eb;display:grid;min-height:100vh;place-items:center;margin:0}.card{width:min(420px,calc(100vw - 32px));background:#1f2937;border:1px solid #374151;border-radius:12px;padding:24px;box-shadow:0 20px 50px rgba(0,0,0,.35)}h1{font-size:20px;margin:0 0 8px}.muted{color:#9ca3af;font-size:14px;line-height:1.5;margin:0 0 18px}label{display:block;font-size:13px;margin-bottom:8px;color:#d1d5db}input{width:100%;box-sizing:border-box;border:1px solid #4b5563;border-radius:8px;background:#111827;color:#f9fafb;padding:10px 12px;font-size:15px}button{margin-top:16px;width:100%;border:0;border-radius:8px;background:#2563eb;color:white;padding:10px 12px;font-weight:600;cursor:pointer}.warn{font-size:13px;color:#fbbf24;margin-top:14px}</style></head><body><form class="card" method="post" action="${escapeHtml(origin)}/oauth/mcp/authorize"><h1>MCP authorization</h1><p class="muted">Enter the internal approval password to grant read-only MCP access to this client.</p><label for="approval_password">Approval password</label><input id="approval_password" name="approval_password" type="password" autofocus required><input type="hidden" name="oauth_payload" value="${escapeHtml(encodedPayload)}"><button type="submit">Allow connection</button><p class="warn">Only approve clients you trust.</p></form></body></html>`;
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char] ?? char);
 }

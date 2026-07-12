@@ -6,6 +6,7 @@ export type McpServerConfig = {
   webToken: string;
   oauthClientId: string;
   oauthClientSecret: string;
+  oauthApprovalPassword?: string;
   oauthSigningKey: string;
   oauthCodeTtl?: number;
   oauthTokenTtl?: number;

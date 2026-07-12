@@ -1,159 +1,97 @@
 # MCP Guide Schema Query
 
-Reusable read-only MCP tools/server for projects that need AI tools to understand a database, inspect schema, run safe `SELECT` queries, and read selected source files.
+Reusable read-only MCP server for Laravel and Node projects.
 
-This repo supports both:
+It exposes five MCP tools:
 
-- Node/Next.js through npm: `@bugmedia/mcp-guide-schema-query`
-- Laravel/PHP through Composer: `bugmedia/mcp-guide-schema-query`
+- `database-guide`: returns a curated Markdown guide for the connected system.
+- `database-schema`: returns database tables, columns, indexes, and foreign keys.
+- `database-select`: runs bounded read-only SQL.
+- `codebase-map`: lists allowed source files from a configured project root.
+- `codebase-read`: reads selected allowed source files.
 
-It exposes three MCP tools:
+The package does not include project schema, domain names, IPs, database credentials, OAuth secrets, or application data. Each consuming project provides its own guide file, route path, database connection, and secrets.
 
-- `database-guide`
-- `database-schema`
-- `database-select`
+## Security Model
 
-Optional codebase tools can be enabled per project:
+This package is designed for production MCP access with strict read-only behavior:
 
-- `codebase-map`
-- `codebase-read`
+- Database tools are marked read-only in MCP annotations.
+- SQL execution allows only `SELECT`, `WITH ... SELECT`, `SHOW`, `EXPLAIN`, `DESCRIBE`, and `DESC`.
+- SQL execution rejects write, DDL, lock, file, account, replication, and administrative statements.
+- SQL execution rejects multiple statements.
+- Node PostgreSQL execution runs inside `BEGIN READ ONLY` and rolls back after the query.
+- Laravel execution should use a database user with read-only privileges.
+- Codebase tools block env files, package auth files, dependency folders, build artifacts, storage folders, and path traversal.
+- OAuth authorization requires an internal approval password before issuing an authorization code.
 
-The Node package includes:
+For production, always create a database user with database-level read-only privileges. Application guards are a second layer, not the only protection.
 
-- OAuth flow compatible with Claude Web custom connectors.
-- Static token support for Codex or curl.
-- Streamable HTTP MCP endpoint handlers.
-- PostgreSQL read-only adapter with SQL guardrails.
+## Claude Web Connector
 
-The Laravel package includes:
+Use a public HTTPS endpoint that serves the MCP Streamable HTTP route.
 
-- Reusable Laravel MCP `Server` class.
-- The same 5 tools: `database-guide`, `database-schema`, `database-select`, `codebase-map`, `codebase-read`.
-- MySQL/MariaDB and PostgreSQL schema inspection.
-- SQL guardrails and read-only transaction execution.
-- Codebase read guardrails.
+Example values:
 
-## Install
+```text
+Name: Project MCP
+MCP server URL: https://your-domain.example/mcp/project
+OAuth Client ID: mcp-project-client
+OAuth Client Secret: leave empty for public PKCE clients, or enter your configured secret if your deployment requires confidential clients
+```
 
-### Node / Next.js
+The OAuth flow uses these routes:
+
+```text
+/.well-known/oauth-protected-resource/mcp/project
+/.well-known/oauth-authorization-server/mcp/project
+/oauth/mcp/register
+/oauth/mcp/authorize
+/oauth/mcp/token
+```
+
+Claude may dynamically register as a public PKCE client. In that mode, no client secret is returned by the registration endpoint. Access is still gated by the approval password shown during authorization.
+
+## Node Usage
+
+Install:
 
 ```bash
-npm install github:BaoNgoThien18/mcp-guide-schema-query
+npm install @bugmedia/mcp-guide-schema-query
 ```
 
-### Laravel
-
-In `composer.json`:
-
-```json
-{
-  "repositories": [
-    {
-      "type": "vcs",
-      "url": "git@github.com:BaoNgoThien18/mcp-guide-schema-query.git"
-    }
-  ],
-  "require": {
-    "bugmedia/mcp-guide-schema-query": "dev-main"
-  }
-}
-```
-
-Then:
-
-```bash
-composer update bugmedia/mcp-guide-schema-query
-php artisan vendor:publish --tag=mcp-guide-schema-query-config
-```
-
-## Environment
-
-Use the same values across projects if you want the same Claude connector credentials:
-
-```env
-MCP_WEB_TOKEN=
-MCP_OAUTH_CLIENT_ID=
-MCP_OAUTH_CLIENT_SECRET=
-MCP_OAUTH_SIGNING_KEY=
-MCP_OAUTH_CODE_TTL=300
-MCP_OAUTH_TOKEN_TTL=3600
-MCP_QUERY_DEFAULT_LIMIT=200
-MCP_QUERY_MAX_LIMIT=1000
-DATABASE_URL=
-```
-
-## Next.js App Router Usage
-
-Create a shared server file:
+Create the MCP server:
 
 ```ts
-// lib/mcp.ts
 import { createMcpServer, createPostgresAdapter } from "@bugmedia/mcp-guide-schema-query";
 
 export const mcp = createMcpServer({
-  serverName: "Finance Database",
-  path: "/mcp/finance",
+  serverName: "Project Database",
+  path: "/mcp/project",
+  publicOrigin: process.env.MCP_PUBLIC_ORIGIN,
   webToken: process.env.MCP_WEB_TOKEN ?? "",
   oauthClientId: process.env.MCP_OAUTH_CLIENT_ID ?? "",
   oauthClientSecret: process.env.MCP_OAUTH_CLIENT_SECRET ?? "",
-  oauthSigningKey: process.env.MCP_OAUTH_SIGNING_KEY ?? process.env.JWT_SECRET ?? "",
-  guideText: "Describe your system and important joins here.",
+  oauthApprovalPassword: process.env.MCP_OAUTH_APPROVAL_PASSWORD ?? process.env.MCP_OAUTH_CLIENT_SECRET ?? "",
+  oauthSigningKey: process.env.MCP_OAUTH_SIGNING_KEY ?? "",
+  guideText: () => readFile("docs/mcp-database-map.md", "utf8"),
+  database: createPostgresAdapter({
+    connectionString: process.env.MCP_DATABASE_URL ?? "",
+    defaultLimit: 200,
+    maxLimit: 1000,
+    statementTimeoutMs: 15000,
+  }),
   codebase: {
     rootDir: process.cwd(),
-    maxFiles: 300,
-    maxReadBytes: 120000,
+    maxFiles: 400,
+    maxReadBytes: 160000,
   },
-  database: createPostgresAdapter({
-    connectionString: process.env.DATABASE_URL ?? "",
-    defaultLimit: Number(process.env.MCP_QUERY_DEFAULT_LIMIT ?? "200"),
-    maxLimit: Number(process.env.MCP_QUERY_MAX_LIMIT ?? "1000"),
-  }),
 });
 ```
 
-## Laravel Usage
-
-Use Laravel MCP for the transport and this package for the reusable server/tools:
-
-```php
-// routes/ai.php
-use Bugmedia\McpGuideSchemaQuery\Servers\GuideSchemaQueryServer;
-use Laravel\Mcp\Facades\Mcp;
-
-Mcp::web('/mcp/kmedia', GuideSchemaQueryServer::class)
-    ->middleware(['your-mcp-auth-middleware', 'throttle:30,1']);
-```
-
-Recommended config/env:
-
-```env
-MCP_SERVER_NAME="Kmedia Production Database"
-MCP_DB_CONNECTION=mysql_mcp_readonly
-MCP_QUERY_DEFAULT_LIMIT=200
-MCP_QUERY_MAX_LIMIT=1000
-MCP_STATEMENT_TIMEOUT_MS=15000
-MCP_CODEBASE_MAX_FILES=400
-MCP_CODEBASE_MAX_READ_BYTES=160000
-```
-
-Configure `mysql_mcp_readonly` or `pgsql_mcp_readonly` in `config/database.php` with a database user that only has read privileges.
-
-The package reads guide docs from:
-
-```text
-docs/mcp-system-overview.md
-docs/mcp-database-map.md
-```
-
-MCP route:
+Example Next.js route handlers:
 
 ```ts
-// app/mcp/finance/route.ts
-import { mcp } from "@/lib/mcp";
-
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
 export const GET = mcp.get;
 export const POST = mcp.post;
 export const DELETE = mcp.delete;
@@ -162,75 +100,87 @@ export const DELETE = mcp.delete;
 OAuth routes:
 
 ```ts
-// app/.well-known/oauth-protected-resource/[[...path]]/route.ts
-import { mcp } from "@/lib/mcp";
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 export const GET = mcp.protectedResource;
 ```
 
 ```ts
-// app/.well-known/oauth-authorization-server/[[...path]]/route.ts
-import { mcp } from "@/lib/mcp";
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 export const GET = mcp.authorizationServer;
 ```
 
 ```ts
-// app/oauth/mcp/register/route.ts
-import { mcp } from "@/lib/mcp";
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 export const POST = mcp.register;
 ```
 
 ```ts
-// app/oauth/mcp/authorize/route.ts
-import { mcp } from "@/lib/mcp";
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 export const GET = mcp.authorize;
+export const POST = mcp.authorize;
 ```
 
 ```ts
-// app/oauth/mcp/token/route.ts
-import { mcp } from "@/lib/mcp";
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 export const POST = mcp.token;
 ```
 
-## Claude Web
+Environment template:
 
-Use:
-
-```text
-Remote MCP server URL: https://your-domain.com/mcp/finance
-OAuth Client ID: MCP_OAUTH_CLIENT_ID
-OAuth Client Secret: MCP_OAUTH_CLIENT_SECRET
+```env
+MCP_PUBLIC_ORIGIN=https://your-domain.example
+MCP_WEB_TOKEN=change-me
+MCP_OAUTH_CLIENT_ID=mcp-project-client
+MCP_OAUTH_CLIENT_SECRET=change-me
+MCP_OAUTH_APPROVAL_PASSWORD=change-me
+MCP_OAUTH_SIGNING_KEY=change-me-long-random-value
+MCP_DATABASE_URL=postgres://readonly_user:password@host:5432/database
 ```
 
-## Codex
+## Laravel Usage
 
-Static token URL:
+Install:
 
 ```bash
-codex mcp add finance --url 'https://your-domain.com/mcp/finance?token=...'
+composer require bugmedia/mcp-guide-schema-query
 ```
 
-## Safety
+Publish config:
 
-`database-select`:
+```bash
+php artisan vendor:publish --tag=mcp-guide-schema-query-config
+```
 
-- Rejects multiple statements.
-- Blocks DDL/DML/admin commands.
-- Runs in a read-only transaction.
-- Applies statement timeout.
-- Adds a limit to plain `SELECT`/`WITH` queries without one.
+Create a guide file:
 
-`codebase-read`:
+```text
+docs/mcp-database-map.md
+```
 
-- Reads only files under the configured `rootDir`.
-- Blocks `.env*`, `.git`, `node_modules`, build output, and dependency/vendor folders.
-- Applies a read budget so large files cannot flood context.
+Recommended guide sections:
+
+- System overview.
+- Important business entities.
+- Important table relationships.
+- Query rules and table naming conventions.
+- Sensitive columns that should not be selected unless explicitly needed.
+- Recommended query patterns.
+
+Environment template:
+
+```env
+MCP_SERVER_NAME="Project Database"
+MCP_DB_CONNECTION=mcp_readonly
+MCP_QUERY_DEFAULT_LIMIT=200
+MCP_QUERY_MAX_LIMIT=1000
+MCP_STATEMENT_TIMEOUT_MS=15000
+MCP_CODEBASE_MAX_FILES=400
+MCP_CODEBASE_MAX_READ_BYTES=160000
+```
+
+Use a dedicated read-only database connection in `config/database.php`. The database account should not have `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`, or administrative privileges.
+
+## Public Repository Checklist
+
+Before publishing a project that uses this package:
+
+- Do not commit `.env`, database URLs, OAuth tokens, OAuth signing keys, SSH hosts, IP addresses, or customer data.
+- Keep project-specific schema and relationship docs inside the private consuming project.
+- Use placeholder domains in public examples.
+- Use read-only database credentials in production.
+- Require an approval password for OAuth authorization.
